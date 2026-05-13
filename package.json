@@ -1,0 +1,34 @@
+{
+  "name": "pi-subagent",
+  "version": "0.1.0",
+  "description": "Minimal Pi extension: one subagent tool that spawns role-shaped child pi processes. Roles defined as markdown in ~/.pi/agent/agents/.",
+  "type": "module",
+  "keywords": [
+    "pi",
+    "subagent",
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "README.md",
+    "package.json",
+    "src",
+    "agents"
+  ]
+}
