@@ -18,8 +18,8 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@mariozechner/pi-agent-core": "*",
-    "@mariozechner/pi-coding-agent": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
