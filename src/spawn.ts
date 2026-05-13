@@ -33,7 +33,7 @@ interface PiMessage {
   usage?: PiUsage;
 }
 
-function extractText(content: PiMessage["content"]): string {
+export function extractText(content: PiMessage["content"]): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
@@ -44,7 +44,7 @@ function extractText(content: PiMessage["content"]): string {
     .trim();
 }
 
-function buildArgs(opts: {
+export function buildArgs(opts: {
   agent: AgentConfig;
   task: string;
   systemPromptPath: string | null;
