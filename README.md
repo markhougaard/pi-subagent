@@ -19,12 +19,12 @@ Only the child's final assistant text is returned to the parent. Everything the 
 From npm (recommended):
 
 ```bash
-pi install pi-subagent
+pi install @marks/pi-subagent
 mkdir -p ~/.pi/agent/agents
-cp node_modules/pi-subagent/agents/*.md ~/.pi/agent/agents/
+cp node_modules/@marks/pi-subagent/agents/*.md ~/.pi/agent/agents/
 ```
 
-The package ships the role markdowns in `agents/` inside `node_modules/pi-subagent/`. Copy or symlink them into `~/.pi/agent/agents/` so Pi can find them — that location is where roles are resolved from.
+The package ships the role markdowns in `agents/` inside `node_modules/@marks/pi-subagent/`. Copy or symlink them into `~/.pi/agent/agents/` so Pi can find them — that location is where roles are resolved from.
 
 From a local checkout (for development):
 
