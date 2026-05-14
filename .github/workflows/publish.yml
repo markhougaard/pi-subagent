@@ -17,9 +17,8 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+      - run: npm install -g npm@latest --force   # npm >=11.5 for OIDC trusted publisher; --force avoids half-replace bug
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

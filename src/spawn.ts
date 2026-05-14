@@ -33,6 +33,11 @@ interface PiMessage {
   usage?: PiUsage;
 }
 
+interface PiEvent {
+  type?: string;
+  message?: PiMessage;
+}
+
 export function extractText(content: PiMessage["content"]): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -42,6 +47,36 @@ export function extractText(content: PiMessage["content"]): string {
     .map((p) => p.text!)
     .join("\n")
     .trim();
+}
+
+/**
+ * Parse one line of pi --mode json output and fold its information into the
+ * result accumulator. Returns true if the line was a recognized event we
+ * acted on. Exported for unit testing.
+ */
+export function parseLine(line: string, result: SubagentResult): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  let event: PiEvent;
+  try {
+    event = JSON.parse(trimmed);
+  } catch {
+    return false;
+  }
+  // We only care about finalized assistant messages — one per turn.
+  if (event.type !== "message_end") return false;
+  const message = event.message;
+  if (!message || message.role !== "assistant") return false;
+
+  const text = extractText(message.content);
+  if (text) result.text = text;
+  if (message.stopReason) result.stopReason = message.stopReason;
+  if (message.usage) {
+    if (typeof message.usage.input === "number") result.usage.input += message.usage.input;
+    if (typeof message.usage.output === "number") result.usage.output += message.usage.output;
+    result.usage.turns += 1;
+  }
+  return true;
 }
 
 export function buildArgs(opts: {
@@ -119,37 +154,17 @@ export async function runSubagent(opts: RunOptions): Promise<SubagentResult> {
         resolve(code);
       };
 
-      const handleLine = (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        let event: PiMessage;
-        try {
-          event = JSON.parse(trimmed);
-        } catch {
-          return;
-        }
-        if (event.role !== "assistant") return;
-        const text = extractText(event.content);
-        if (text) result.text = text;
-        if (event.stopReason) result.stopReason = event.stopReason;
-        if (event.usage) {
-          if (typeof event.usage.input === "number") result.usage.input += event.usage.input;
-          if (typeof event.usage.output === "number") result.usage.output += event.usage.output;
-          result.usage.turns += 1;
-        }
-      };
-
       proc.stdout.on("data", (chunk: Buffer) => {
         buffer += chunk.toString();
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? "";
-        for (const line of lines) handleLine(line);
+        for (const line of lines) parseLine(line, result);
       });
       proc.stderr.on("data", (chunk: Buffer) => {
         result.stderr += chunk.toString();
       });
       proc.on("close", (code) => {
-        if (buffer.trim()) handleLine(buffer);
+        if (buffer.trim()) parseLine(buffer, result);
         finish(code ?? 0);
       });
       proc.on("error", (err) => {
