@@ -17,8 +17,10 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
-      - run: npm install -g npm@latest --force   # npm >=11.5 for OIDC trusted publisher; --force avoids half-replace bug
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm publish --provenance --access public
+      # Use a one-shot npm@latest via npx for OIDC support (needs npm >=11.5).
+      # Self-upgrading the global npm in-place fails with MODULE_NOT_FOUND
+      # mid-replace; npx avoids that by running from a separate prefix.
+      - run: npx -y npm@latest publish --provenance --access public
