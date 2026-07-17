@@ -97,10 +97,12 @@ export function buildArgs(opts: {
 }
 
 function resolvePiSpawn(): { command: string; prefix: string[] } {
-  // Re-use the same node + pi script the parent is running under.
+  // Reuse parent Node + Pi entrypoint only when it is the packaged CLI; otherwise fall back to PATH.
+  const entrypoint = process.argv[1];
   const isNode = /[\\/]node$/i.test(process.execPath);
-  if (isNode && process.argv[1]) return { command: process.execPath, prefix: [process.argv[1]] };
-  return { command: process.execPath, prefix: [] };
+  const isPiCli = /[\\/]@earendil-works[\\/]pi-coding-agent/i.test(entrypoint ?? "");
+  if (isNode && isPiCli) return { command: process.execPath, prefix: [entrypoint] };
+  return { command: "pi", prefix: [] };
 }
 
 export interface RunOptions {
