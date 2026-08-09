@@ -4,55 +4,60 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A **Pi extension** in early scaffolding called `pi-parallel-subagent`. Pi (`pi`, installed at `~/.nvm/versions/node/v22.14.0/bin/pi`) is an AI coding-assistant CLI with a TypeScript extension API. This extension exposes a single synchronous `fork` tool that spawns parallel child `pi` processes for delegated tasks and returns their structured results to the parent.
+A **Pi extension** published to npm as `@marks/pi-subagent`. Pi (`pi`, installed at `~/.nvm/versions/node/v22.14.0/bin/pi`) is an AI coding-assistant CLI with a TypeScript extension API. This extension registers a single `subagent` tool that spawns role-shaped child `pi` processes for delegated work and returns only their final text to the parent.
 
-The codebase is **pre-implementation**: no source files exist yet. Everything is specified through tickets in `.tickets/`. Treat those as the source of truth for design and acceptance criteria.
+Roles are markdown files with frontmatter (`name`, `description`, `model`, `thinking`), resolved from `~/.pi/agent/agents/` and overridden per-project by the nearest `<repo>/.pi/agents/`.
 
-## Workflow: tickets are the spec
+There is no build step — Pi runs the TypeScript directly via the `pi.extensions` field in `package.json`.
 
-Work is tracked with `tk` (Tickety, installed globally) — `.tickets/*.md` are the working unit. Useful commands:
+## Layout
 
-- `tk ready` — open/in-progress tickets whose deps are resolved (start here)
-- `tk show <id>` — full ticket (partial ID match works: `tk show ph8w`)
-- `tk dep tree pt-ph8w` — visualize the epic's dependency graph
+```
+src/
+  index.ts      # tool registration, schema refresh, result formatting
+  agents.ts     # discover + load markdown roles
+  spawn.ts      # resolve the pi CLI, spawn the child, parse JSON-mode output
+  settings.ts   # ~/.pi/agent/settings.json["pi-subagent"]
+agents/         # bundled role markdowns
+```
+
+## Commands
+
+- `npm test` — unit tests (Node's built-in runner, `--experimental-strip-types`)
+- `npm run test:integration` — live-model tests; needs a reachable provider, so it is kept out of `npm test` and CI
+- `npm run typecheck` — `tsc --noEmit`
+- `pi -e ./src/index.ts` — load this extension into an interactive pi session
+- `pi install $(pwd)` / `pi list` — persistent registration
+
+## Design invariants
+
+Changing any of these is a behavior change, not a refactor. Each is covered by a test that explains why.
+
+- **Register the tool at load time, not from `session_start`.** Pi's `detectExtensionConflicts` runs a single pass over each extension's tools after loading. Registering later bypasses it, so a second extension owning the name `subagent` silently shadows this one instead of erroring. `session_start` / `before_agent_start` only *re-register* the same name to refresh the schema.
+- **The `agent` enum is omitted when no roles are discovered.** An empty `enum: []` makes the tool uncallable. `registeredNames` starts as `null`, not `""`, so a genuinely empty role set still registers once.
+- **Never reuse `process.argv[1]` without checking it is the pi CLI.** Node does not realpath `argv[1]`, so a global install appears as the bin symlink (`…/bin/pi`), not the package path — `resolvePiSpawn` resolves it before matching. Inside a host that merely embeds pi, `argv[1]` is the host's script and spawning it would start the wrong program.
+- **A child that exits 0 is not necessarily a success.** Provider failures (connection refused, bad auth, rate limit) come back as exit 0 with empty content and `stopReason: "error"` / `errorMessage` on the message. `toToolResult` reports those as errors; treating them as `"(empty response)"` hides real failures from the parent.
+- **Only the child's final assistant text crosses back.** Keeping child token usage out of the parent's context is the point of the extension.
+
+## Child process contract
+
+`runSubagent` invokes `pi --mode json -p --no-session --no-extensions`, plus `--extension` for each entry in the `pi-subagent.extensions` setting, `--model` / `--thinking` from role frontmatter, and `--append-system-prompt` pointing at a temp file holding the role body. Output is parsed line-by-line; only `message_end` events with `role: "assistant"` are folded into the result.
+
+Provider extensions must be listed in settings — children run with `--no-extensions`, so a role pinned to e.g. a llama-cpp model fails with "Model not found" unless the provider extension is passed through.
+
+## Workflow: tickets
+
+Work is tracked with `tk` (Tickety, installed globally); `.tickets/*.md` are the working unit.
+
+- `tk ready` — open/in-progress tickets whose deps are resolved
+- `tk show <id>` — full ticket (partial ID match works)
 - `tk start <id>` / `tk close <id>` — status transitions
 - `tk add-note <id>` — append findings (pipe via stdin)
 
-**Implementation order** (from `tk dep tree pt-ph8w`):
-1. `pt-urgs` — scaffold extension manifest + register stubbed `fork` tool
-2. `pt-tn1u` — real child `pi` spawn for a single task (blocks everything below)
-3. `pt-42nx` — research: can Pi extensions constrain a child's toolset? (gates `pt-gvr7`)
-4. Parallel after `pt-tn1u`: `pt-jaof` (concurrency cap), `pt-xsn9` (example-based validation + retry-once), `pt-pisr` (effort profile mapping), `pt-0zrg` (hard kill on timeout + artifact transcripts), `pt-gvr7` (read-only child default)
-5. `pt-upc6` — E2E test on work hardware with Qwen3.6-27b
+Record research findings and decisions in the ticket via `tk add-note`, not in separate docs.
 
-Record research findings and decisions in the ticket itself via `tk add-note`, not in separate docs.
+Note: the `pt-*` tickets describe an earlier, more elaborate `fork({tasks: [...]})` design that was **not** built. The shipped tool is the simpler single-task `subagent({agent, task})`; treat `pt-*` as historical context, and the `ps-*` tickets as current.
 
-## The `fork` contract (from pt-ph8w)
+## Releasing
 
-```
-fork({tasks: Task[], concurrency=2, defaultTimeoutMs=600000, defaultTurnLimit=25})
-  -> {results: TaskResult[], totalDurationMs}
-```
-
-Each `Task` has `name`, `prompt`, optional `context` blob, `returns:{example}`, and optional per-task `writable` / `effort` overrides. Key design rules baked into the tickets:
-
-- **Fresh-spawn children only** — no session reuse; the whole point is keeping child token usage out of the parent's context.
-- **Caller-assembled context** — children don't read files autonomously by default; the parent passes the context blob.
-- **Example-based shape validation** — parse the child's last fenced JSON block, shape-match against `returns.example` (top-level key presence + JS-typeof + first-element type for arrays). Mismatch → one retry citing the specific failure → `validation_failed` with `rawOutput`.
-- **Read-only children by default** — `writable:true` escalates per task. Whether this is process-enforced or prompt-enforced is the open question in `pt-42nx`.
-- **Results returned in input order**, regardless of completion order.
-- **Artifact transcripts always** — write child message stream to `$TMPDIR/pi-parallel-subagent/<runId>/<taskName>.jsonl` for every task, even on timeout/failure.
-
-## Configuration shape
-
-Extension config lives under a `pi-parallel-subagent` block in `~/.pi/agent/settings.json` (same pattern the existing `pi-fork` extension uses, per `pt-pisr`). It maps `effort: 'fast' | 'balanced' | 'deep'` to `{provider, model, thinking}`, which are passed through as flags to child `pi` processes. Default effort: `balanced`. Missing/invalid profile → child uses Pi default and a warning is recorded in `result.error`.
-
-## Building & running the extension
-
-Pi extensions are loaded either persistently via `pi install <path>` (registers in `~/.pi/agent/settings.json`) or per-invocation via `pi -e <path>`. Once code exists, the dev loop is:
-
-- `pi -e ./<entrypoint>.ts` — load this extension into an interactive pi session for testing
-- `pi list` — confirm registration after `pi install`
-- `pi --version` — currently expected to be on the 0.74.x line
-
-There is no build/lint/test tooling yet — when adding it, prefer matching the conventions of existing extensions at `~/.pi/agent/extensions/` (`ollama.ts`, `think-toggle.ts`, `auto-plan.ts`) rather than introducing a new toolchain.
+`.github/workflows/publish.yml` fires on `v*` tags and runs `npm ci`, typecheck, and tests before `npm publish --provenance` via OIDC (no `NPM_TOKEN`). Bump `version` in `package.json`, commit, then tag.

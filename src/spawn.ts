@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "./agents.ts";
 import type { Settings } from "./settings.ts";
 
@@ -10,6 +11,8 @@ export interface SubagentResult {
   model: string | null;
   text: string;
   stopReason: string | null;
+  /** Provider-reported failure. Present even when the child exits 0. */
+  errorMessage: string | null;
   exitCode: number;
   usage: { input: number; output: number; turns: number };
   stderr: string;
@@ -30,6 +33,7 @@ interface PiMessage {
   content?: AssistantContentPart[] | string;
   text?: string;
   stopReason?: string;
+  errorMessage?: string;
   usage?: PiUsage;
 }
 
@@ -71,6 +75,9 @@ export function parseLine(line: string, result: SubagentResult): boolean {
   const text = extractText(message.content);
   if (text) result.text = text;
   if (message.stopReason) result.stopReason = message.stopReason;
+  // A provider failure (auth, connection, rate limit) still exits 0, so the
+  // only signal the parent gets is here.
+  if (message.errorMessage) result.errorMessage = message.errorMessage;
   if (message.usage) {
     if (typeof message.usage.input === "number") result.usage.input += message.usage.input;
     if (typeof message.usage.output === "number") result.usage.output += message.usage.output;
@@ -96,11 +103,88 @@ export function buildArgs(opts: {
   return args;
 }
 
-function resolvePiSpawn(): { command: string; prefix: string[] } {
-  // Re-use the same node + pi script the parent is running under.
-  const isNode = /[\\/]node$/i.test(process.execPath);
-  if (isNode && process.argv[1]) return { command: process.execPath, prefix: [process.argv[1]] };
-  return { command: process.execPath, prefix: [] };
+const PI_CLI_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_CLI_PATH_RE = /[\\/]@earendil-works[\\/]pi-coding-agent[\\/]/i;
+
+export interface SpawnEnv {
+  execPath: string;
+  argv1: string | undefined;
+  execArgv: string[];
+  /** Resolve symlinks. Node does NOT realpath argv[1], so a global install
+   * surfaces as the bin symlink (…/bin/pi) rather than the package path. */
+  realpath: (p: string) => string;
+  /** Locate the pi CLI through normal module resolution. Used when the parent
+   * is some other Node host that merely depends on pi. */
+  resolvePackage: (specifier: string) => string | null;
+}
+
+function defaultResolvePackage(specifier: string): string | null {
+  try {
+    const url = import.meta.resolve(specifier);
+    const entry = fileURLToPath(url);
+    // The package main lives beside the CLI entrypoint (dist/index.js → dist/cli.js).
+    const cli = path.join(path.dirname(entry), "cli.js");
+    return fs.existsSync(cli) ? cli : null;
+  } catch {
+    return null;
+  }
+}
+
+export function defaultSpawnEnv(): SpawnEnv {
+  return {
+    execPath: process.execPath,
+    argv1: process.argv[1],
+    execArgv: process.execArgv,
+    realpath: (p) => fs.realpathSync(p),
+    resolvePackage: defaultResolvePackage,
+  };
+}
+
+/**
+ * Decide how to launch a child pi process.
+ *
+ * Reusing the parent's node + argv[1] is only correct when argv[1] really is
+ * the pi CLI. Inside a host that embeds pi as a library, argv[1] belongs to
+ * the host, and spawning it would start the wrong program. Exported for tests.
+ */
+export function resolvePiSpawn(env: SpawnEnv = defaultSpawnEnv()): {
+  command: string;
+  prefix: string[];
+} {
+  const isNode = /[\\/]node(\.exe)?$/i.test(env.execPath);
+
+  // Not node: either pi shipped as a compiled binary (execPath *is* pi), or we
+  // are inside some other compiled host that cannot be reused as a launcher.
+  if (!isNode) {
+    const self = path.basename(env.execPath).replace(/\.exe$/i, "");
+    return self === "pi"
+      ? { command: env.execPath, prefix: [] }
+      : { command: "pi", prefix: [] };
+  }
+
+  const nodeFlags = env.execArgv.filter((f) => f.startsWith("--experimental-"));
+  const viaNode = (script: string) => ({
+    command: env.execPath,
+    prefix: [...nodeFlags, script],
+  });
+
+  // Parent is the pi CLI itself — reuse it, resolving the bin symlink first.
+  if (env.argv1) {
+    let entry = env.argv1;
+    try {
+      entry = env.realpath(env.argv1);
+    } catch {
+      // keep the unresolved path
+    }
+    if (PI_CLI_PATH_RE.test(entry)) return viaNode(entry);
+  }
+
+  // Parent is a different Node host: find the pi it depends on.
+  const resolved = env.resolvePackage(PI_CLI_PACKAGE);
+  if (resolved) return viaNode(resolved);
+
+  // Last resort: whatever `pi` is on PATH.
+  return { command: "pi", prefix: [] };
 }
 
 export interface RunOptions {
@@ -127,6 +211,7 @@ export async function runSubagent(opts: RunOptions): Promise<SubagentResult> {
     model: agent.model ?? settings.model,
     text: "",
     stopReason: null,
+    errorMessage: null,
     exitCode: -1,
     usage: { input: 0, output: 0, turns: 0 },
     stderr: "",

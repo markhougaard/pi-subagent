@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildArgs, extractText, parseLine } from "./spawn.ts";
+import { buildArgs, extractText, parseLine, resolvePiSpawn } from "./spawn.ts";
 
 function makeResult() {
   return {
@@ -8,6 +8,7 @@ function makeResult() {
     model: null,
     text: "",
     stopReason: null,
+    errorMessage: null,
     exitCode: -1,
     usage: { input: 0, output: 0, turns: 0 },
     stderr: "",
@@ -232,4 +233,102 @@ test("buildArgs — always includes --no-extensions", () => {
     settings: { model: null, extensions: [] },
   });
   assert.ok(args.includes("--no-extensions"));
+});
+
+// --- resolvePiSpawn --------------------------------------------------------
+
+const PI_PKG_CLI =
+  "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
+
+function env(overrides = {}) {
+  return {
+    execPath: "/usr/local/bin/node",
+    argv1: undefined,
+    execArgv: [],
+    realpath: (p) => p,
+    resolvePackage: () => null,
+    ...overrides,
+  };
+}
+
+test("resolvePiSpawn — reuses parent node when argv[1] is the pi CLI", () => {
+  const { command, prefix } = resolvePiSpawn(env({ argv1: PI_PKG_CLI }));
+  assert.equal(command, "/usr/local/bin/node");
+  assert.deepEqual(prefix, [PI_PKG_CLI]);
+});
+
+test("resolvePiSpawn — realpaths the bin symlink before matching", () => {
+  // Node does not resolve argv[1]; a global install looks like …/bin/pi.
+  const { command, prefix } = resolvePiSpawn(
+    env({
+      argv1: "/usr/local/bin/pi",
+      realpath: (p) => (p === "/usr/local/bin/pi" ? PI_PKG_CLI : p),
+    }),
+  );
+  assert.equal(command, "/usr/local/bin/node");
+  assert.deepEqual(prefix, [PI_PKG_CLI]);
+});
+
+test("resolvePiSpawn — forwards --experimental- flags to the child", () => {
+  const { prefix } = resolvePiSpawn(
+    env({
+      argv1: PI_PKG_CLI,
+      execArgv: ["--experimental-strip-types", "--max-old-space-size=4096"],
+    }),
+  );
+  assert.deepEqual(prefix, ["--experimental-strip-types", PI_PKG_CLI]);
+});
+
+test("resolvePiSpawn — never reuses a host entrypoint that is not pi", () => {
+  const resolved = resolvePiSpawn(
+    env({ argv1: "/srv/app/server.js", resolvePackage: () => PI_PKG_CLI }),
+  );
+  assert.equal(resolved.command, "/usr/local/bin/node");
+  assert.deepEqual(resolved.prefix, [PI_PKG_CLI]);
+});
+
+test("resolvePiSpawn — falls back to PATH when pi cannot be located", () => {
+  const { command, prefix } = resolvePiSpawn(env({ argv1: "/srv/app/server.js" }));
+  assert.equal(command, "pi");
+  assert.deepEqual(prefix, []);
+});
+
+test("resolvePiSpawn — a compiled pi binary launches itself", () => {
+  const { command, prefix } = resolvePiSpawn(env({ execPath: "/opt/pi/bin/pi" }));
+  assert.equal(command, "/opt/pi/bin/pi");
+  assert.deepEqual(prefix, []);
+});
+
+test("resolvePiSpawn — a non-pi compiled host defers to PATH", () => {
+  const { command } = resolvePiSpawn(env({ execPath: "/opt/other/bin/myhost" }));
+  assert.equal(command, "pi");
+});
+
+test("resolvePiSpawn — a realpath failure does not throw", () => {
+  const { command } = resolvePiSpawn(
+    env({
+      argv1: "/gone/pi",
+      realpath: () => {
+        throw new Error("ENOENT");
+      },
+    }),
+  );
+  assert.equal(command, "pi");
+});
+
+test("parseLine: a provider error is captured even though the child exits 0", () => {
+  const result = makeResult();
+  const line = JSON.stringify({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [],
+      stopReason: "error",
+      errorMessage: "Connection error.",
+    },
+  });
+  assert.equal(parseLine(line, result), true);
+  assert.equal(result.text, "");
+  assert.equal(result.stopReason, "error");
+  assert.equal(result.errorMessage, "Connection error.");
 });
