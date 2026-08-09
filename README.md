@@ -23,12 +23,14 @@ If a child fails — a nonzero exit, or a provider error such as a refused conne
 From npm (recommended):
 
 ```bash
-pi install @marks/pi-subagent
+pi install npm:@marks/pi-subagent
 mkdir -p ~/.pi/agent/agents
-cp node_modules/@marks/pi-subagent/agents/*.md ~/.pi/agent/agents/
+cp ~/.pi/agent/npm/node_modules/@marks/pi-subagent/agents/*.md ~/.pi/agent/agents/
 ```
 
-The package ships the role markdowns in `agents/` inside `node_modules/@marks/pi-subagent/`. Copy or symlink them into `~/.pi/agent/agents/` so Pi can find them — that location is where roles are resolved from.
+The `npm:` prefix is required. Without a scheme, `pi install` treats the argument as a filesystem path and fails with `Path does not exist:`.
+
+Pi installs npm packages under `~/.pi/agent/npm/node_modules/`, not into a `node_modules/` in the current directory. The package ships the role markdowns in its `agents/` folder; copy or symlink them into `~/.pi/agent/agents/`, which is where roles are resolved from.
 
 From a local checkout (for development):
 
