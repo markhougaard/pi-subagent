@@ -14,6 +14,10 @@ Built to keep parent context lean on local-LLM setups where the main session has
 
 Only the child's final assistant text is returned to the parent. Everything the child thought, called, and read stays in the child's process.
 
+The `agent` parameter is constrained to the roles that actually resolve for the session's working directory, and the same list is appended to the parent's system prompt — so the parent can only ask for roles that exist. Roles added mid-session are picked up on the next turn.
+
+If a child fails — a nonzero exit, or a provider error such as a refused connection or bad credentials — the tool returns an error naming the cause and the model, rather than an empty success.
+
 ## Install
 
 From npm (recommended):
@@ -78,11 +82,14 @@ Two child `pi` processes run side by side; both replies land back before the par
 
 ```
 src/
-  index.ts      # registerTool wiring
+  index.ts      # registerTool wiring + result formatting
   agents.ts     # discover + load markdown roles
-  spawn.ts      # child pi process + JSON-mode parse
+  spawn.ts      # resolve the pi CLI, spawn child, JSON-mode parse
   settings.ts   # ~/.pi/agent/settings.json["pi-subagent"]
 agents/         # bundled role markdowns
 ```
+
+`npm test` runs the unit tests. `npm run test:integration` runs the live-model
+tests, which need a reachable provider and are kept out of CI.
 
 No build step — Pi runs the TypeScript directly via `pi.extensions` in `package.json`.

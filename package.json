@@ -1,6 +1,6 @@
 {
   "name": "@marks/pi-subagent",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Minimal Pi extension: one subagent tool that spawns role-shaped child pi processes. Roles defined as markdown in ~/.pi/agent/agents/.",
   "type": "module",
   "main": "src/index.ts",
@@ -40,7 +40,8 @@
     ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test 'src/**/*.test.js'",
+    "test": "node --experimental-strip-types --test --test-skip-pattern='^integration:' 'src/**/*.test.js'",
+    "test:integration": "node --experimental-strip-types --test --test-name-pattern='^integration:' 'src/**/*.test.js'",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
